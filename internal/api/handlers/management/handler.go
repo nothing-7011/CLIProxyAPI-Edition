@@ -47,6 +47,7 @@ type Handler struct {
 	allowRemoteOverride bool
 	envSecret           string
 	logDir              string
+	OnConfigUpdated     func()
 }
 
 // NewHandler creates a new management handler instance.

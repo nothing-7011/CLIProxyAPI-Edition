@@ -27,6 +27,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/ratelimit"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
@@ -132,6 +133,9 @@ type Server struct {
 
 	// accessManager handles request authentication providers.
 	accessManager *sdkaccess.Manager
+
+	// rateLimiter manages request rate limiting.
+	rateLimiter *ratelimit.RateLimiter
 
 	// requestLogger is the request logger instance for dynamic configuration updates.
 	requestLogger logging.RequestLogger
@@ -239,6 +243,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		handlers:            handlers.NewBaseAPIHandlers(&cfg.SDKConfig, authManager),
 		cfg:                 cfg,
 		accessManager:       accessManager,
+		rateLimiter:         ratelimit.NewRateLimiter(),
 		requestLogger:       requestLogger,
 		loggerToggle:        toggle,
 		configFilePath:      configFilePath,
@@ -246,6 +251,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		envManagementSecret: envManagementSecret,
 		wsRoutes:            make(map[string]struct{}),
 	}
+	s.handlers.RateLimiter = s.rateLimiter
+	s.rateLimiter.Update(cfg.RateLimit.Rules, cfg.APIKeys)
+
 	s.wsAuthEnabled.Store(cfg.WebsocketAuth)
 	// Save initial YAML snapshot
 	s.oldConfigYaml, _ = yaml.Marshal(cfg)
@@ -266,6 +274,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		logDir = filepath.Join(base, "logs")
 	}
 	s.mgmt.SetLogDirectory(logDir)
+	s.mgmt.OnConfigUpdated = func() {
+		s.UpdateClients(s.cfg)
+	}
 	s.localPassword = optionState.localPassword
 
 	// Setup routes
@@ -624,6 +635,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.POST("/iflow-auth-url", s.mgmt.RequestIFlowCookieToken)
 		mgmt.POST("/oauth-callback", s.mgmt.PostOAuthCallback)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
+
+		mgmt.GET("/rate-limits", s.mgmt.GetRateLimits)
+		mgmt.PUT("/rate-limits", s.mgmt.PutRateLimits)
 	}
 }
 
@@ -981,6 +995,7 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	s.oldConfigYaml, _ = yaml.Marshal(cfg)
 
 	s.handlers.UpdateClients(&cfg.SDKConfig)
+	s.rateLimiter.Update(cfg.RateLimit.Rules, cfg.APIKeys)
 
 	if !cfg.RemoteManagement.DisableControlPanel {
 		staticDir := managementasset.StaticDir(s.configFilePath)

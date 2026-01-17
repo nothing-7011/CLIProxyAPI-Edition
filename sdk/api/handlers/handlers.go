@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/ratelimit"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/util"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -178,6 +179,9 @@ type BaseAPIHandler struct {
 
 	// Cfg holds the current application configuration.
 	Cfg *config.SDKConfig
+
+	// RateLimiter manages request rate limiting.
+	RateLimiter *ratelimit.RateLimiter
 }
 
 // NewBaseAPIHandlers creates a new API handlers instance.
@@ -380,6 +384,9 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
+	if err := h.checkRateLimit(ctx, modelName); err != nil {
+		return nil, err
+	}
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
 		return nil, errMsg
@@ -418,6 +425,9 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 // ExecuteCountWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, *interfaces.ErrorMessage) {
+	if err := h.checkRateLimit(ctx, modelName); err != nil {
+		return nil, err
+	}
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
 		return nil, errMsg
@@ -456,6 +466,12 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 // ExecuteStreamWithAuthManager executes a streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) (<-chan []byte, <-chan *interfaces.ErrorMessage) {
+	if err := h.checkRateLimit(ctx, modelName); err != nil {
+		errChan := make(chan *interfaces.ErrorMessage, 1)
+		errChan <- err
+		close(errChan)
+		return nil, errChan
+	}
 	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
 	if errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
@@ -707,6 +723,27 @@ func (h *BaseAPIHandler) LoggingAPIResponseError(ctx context.Context, err *inter
 			}
 		}
 	}
+}
+
+func (h *BaseAPIHandler) checkRateLimit(ctx context.Context, modelName string) *interfaces.ErrorMessage {
+	if h.RateLimiter == nil {
+		return nil
+	}
+	var apiKey string
+	if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil {
+		apiKey = ginCtx.GetString("apiKey")
+	}
+	if apiKey == "" {
+		return nil
+	}
+
+	if !h.RateLimiter.Check(apiKey, modelName) {
+		return &interfaces.ErrorMessage{
+			StatusCode: http.StatusTooManyRequests,
+			Error:      fmt.Errorf("rate limit exceeded for model %s", modelName),
+		}
+	}
+	return nil
 }
 
 // APIHandlerCancelFunc is a function type for canceling an API handler's context.

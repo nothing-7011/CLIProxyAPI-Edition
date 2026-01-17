@@ -23,12 +23,31 @@ type SDKConfig struct {
 	// Access holds request authentication provider configuration.
 	Access AccessConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
 
+	// RateLimit configures per-key per-model rate limits.
+	RateLimit RateLimitConfig `yaml:"rate-limit" json:"rate-limit"`
+
 	// Streaming configures server-side streaming behavior (keep-alives and safe bootstrap retries).
 	Streaming StreamingConfig `yaml:"streaming" json:"streaming"`
 
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+}
+
+// RateLimitConfig holds rate limiting configuration.
+type RateLimitConfig struct {
+	// Rules defines the list of rate limiting rules.
+	Rules []RateLimitRule `yaml:"rules" json:"rules"`
+}
+
+// RateLimitRule defines a single rate limiting rule.
+type RateLimitRule struct {
+	// APIKey is the client API key to limit.
+	APIKey string `yaml:"api-key" json:"api-key"`
+	// Model is the model ID to limit.
+	Model string `yaml:"model" json:"model"`
+	// RPH is the requests per hour limit.
+	RPH int `yaml:"rph" json:"rph"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.
