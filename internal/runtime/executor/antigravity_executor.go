@@ -1069,6 +1069,8 @@ func FetchAntigravityModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *c
 		now := time.Now().Unix()
 		modelConfig := registry.GetAntigravityModelConfig()
 		models := make([]*registry.ModelInfo, 0, len(result.Map()))
+		seen := make(map[string]struct{})
+
 		for originalName, modelData := range result.Map() {
 			modelID := strings.TrimSpace(originalName)
 			if modelID == "" {
@@ -1078,6 +1080,7 @@ func FetchAntigravityModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *c
 			case "chat_20706", "chat_23310", "gemini-2.5-flash-thinking", "gemini-3-pro-low", "gemini-2.5-pro":
 				continue
 			}
+			seen[modelID] = struct{}{}
 			modelCfg := modelConfig[modelID]
 
 			// Extract displayName from upstream response, fallback to modelID
@@ -1098,6 +1101,33 @@ func FetchAntigravityModels(ctx context.Context, auth *cliproxyauth.Auth, cfg *c
 				Type:        antigravityAuthType,
 			}
 			// Look up Thinking support from static config using upstream model name.
+			if modelCfg != nil {
+				if modelCfg.Thinking != nil {
+					modelInfo.Thinking = modelCfg.Thinking
+				}
+				if modelCfg.MaxCompletionTokens > 0 {
+					modelInfo.MaxCompletionTokens = modelCfg.MaxCompletionTokens
+				}
+			}
+			models = append(models, modelInfo)
+		}
+
+		// Include static models from config that are missing from upstream response
+		for modelID, modelCfg := range modelConfig {
+			if _, exists := seen[modelID]; exists {
+				continue
+			}
+			modelInfo := &registry.ModelInfo{
+				ID:          modelID,
+				Name:        modelID,
+				Description: modelID,
+				DisplayName: modelID,
+				Version:     modelID,
+				Object:      "model",
+				Created:     now,
+				OwnedBy:     antigravityAuthType,
+				Type:        antigravityAuthType,
+			}
 			if modelCfg != nil {
 				if modelCfg.Thinking != nil {
 					modelInfo.Thinking = modelCfg.Thinking
